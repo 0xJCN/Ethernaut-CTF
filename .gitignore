@@ -1,0 +1,10 @@
+# Ape stuff
+.build/
+.cache/
+.tests/
+
+# Python
+.env
+.ape
+.pytest_cache
+__pycache__

@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "Ethernaut CTF"
+version = "0.1.0"
+description = "Ethernaut CTF solutions with Ape and Vyper"
+authors = "0xJCN"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+eth-ape = "^0.5.9"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,15 @@
+name: Ethernaut CTF
+
+default_ecosystem: arbitrum
+
+arbitrum:
+  default_network: goerli
+  goerli:
+    gas_limit: 2000000
+    default_provider: geth
+    transaction_acceptance_timeout: 600 # 5 minutes
+
+geth:
+  arbitrum:
+    goerli:
+      uri: https://arb-goerli.g.alchemy.com/v2/{$API_KEY}
