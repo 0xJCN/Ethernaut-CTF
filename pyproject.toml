@@ -2,11 +2,12 @@
 name = "Ethernaut CTF"
 version = "0.1.0"
 description = "Ethernaut CTF solutions with Ape and Vyper"
-authors = "0xJCN"
+authors = ["0xJCN"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.11"
 eth-ape = "^0.5.9"
+vyper = { git = "https://github.com/vyperlang/vyper.git", rev="ae7d6d28"}
 
 [tool.poetry.dev-dependencies]
 
