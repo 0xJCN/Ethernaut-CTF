@@ -1,0 +1,29 @@
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+                 // [] - stack is empty
+    caller       // [caller] - our attacker account is the caller
+    [OWNER_SLOT] // [0x00, origin] OWNER_SLOT is the 0th slot in storage
+    sstore       // [] - sstore consumes top 2 stack items. The first item is
+                 // the key (storage location) and the second item is the value (item to store)
+}
+
+#define macro MAIN() = takes (0) returns (0) {
+                 // [] - Stack is empty
+    origin       // [origin] - tx.origin is pushed onto the stack
+    [OWNER_SLOT] // [0x00, origin] - memory address 0x00 (first slot) is pushed onto the stack
+    sload        // [owner_value, origin] - sload consumes the top item off the stack as the memory address key and returns value (our address) => sload(key)
+    xor          // [xor_value] - XOR consumes top 2 items off the stack and performs bitwise xor on items. If they are the same, 0 will get pushed onto the stack
+                 // the purpose of this is to jump to throw_error label if origin is not equal to the owner of the contract
+    throw_error  // [throw_error_offset, xor_value] - the byte offset in code for the throw_error label is pushed onto the stack
+    jumpi        // [] - jumpi consumes two items off the stack. First item is the byte offset in code for where to continue execution. 
+                 // if second item is not 0, PC counter will change to new execution path, otherwise the execution continues on current path
+    0x00         // [0x00] - byte offset of where to start reading from calldata
+    calldataload // [calldata] - calldata should have an address
+    selfdestruct // [] - sefdestruct consumed item on top of stack (expecting address) 
+                 // and will send current balance to address
+                 // note that we are not doing any checks for the calldata loaded
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+}

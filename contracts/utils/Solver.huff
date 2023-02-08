@@ -1,0 +1,4 @@
+#define macro MAIN() = takes (0) returns (0) {
+    0x2a 0x00 mstore // store value 0x2a (42) at memory offset 0x00 (0) => mstore(0x00, 0x2a)
+    0x20 0x00 return // return 0x20 bytes (32) of data starting from memory offset 0x00 (0) => return(0x00, 0x20)
+}
