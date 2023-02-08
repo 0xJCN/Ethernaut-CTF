@@ -18,7 +18,7 @@ def main():
     # exploit goes here
     print("\n--- Exploiting level instance ---\n")
     contract.pwn(sender=user)
-    assert contract.owner() == user.address, "!owner"
+    assert contract.owner() == user, "!owner"
 
     # submiting level instance
     print("\n--- Submitting level instance ---\n")

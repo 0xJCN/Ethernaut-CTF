@@ -21,17 +21,17 @@ def main():
     print("\n--- Exploiting level instance ---\n")
 
     print(
-        f"\n--- Our balance before the exploit: {hacker.instanceBalanceOf(user.address)} ---\n"
+        f"\n--- Our balance before the exploit: {hacker.instanceBalanceOf(user)} ---\n"
     )
     print(
-        f"\n--- Our contract's balance before exploit: {hacker.instanceBalanceOf(hacker.address)} ---\n"
+        f"\n--- Our contract's balance before exploit: {hacker.instanceBalanceOf(hacker)} ---\n"
     )
     hacker.attack(sender=user)
     print(
-        f"\n--- Our balance after the exploit: {hacker.instanceBalanceOf(user.address)} ---\n"
+        f"\n--- Our balance after the exploit: {hacker.instanceBalanceOf(user)} ---\n"
     )
     print(
-        f"\n--- Our contract's balance after before exploit: {hacker.instanceBalanceOf(hacker.address)} ---\n"
+        f"\n--- Our contract's balance after before exploit: {hacker.instanceBalanceOf(hacker)} ---\n"
     )
 
     # submiting level instance

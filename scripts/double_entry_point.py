@@ -17,9 +17,9 @@ def main():
     print("\n--- Deploying and Registering Bot Contract with Forta ---\n")
     bot = project.DoubleEntryPoint.deploy(instance, sender=user)
     forta = project.Forta.at(bot.forta())
-    forta.setDetectionBot(bot.address, sender=user)
+    forta.setDetectionBot(bot, sender=user)
 
-    assert forta.usersDetectionBots(user.address) == bot.address
+    assert forta.usersDetectionBots(user) == bot
 
     # submiting level instance
     print("\n--- Submitting level instance ---\n")
