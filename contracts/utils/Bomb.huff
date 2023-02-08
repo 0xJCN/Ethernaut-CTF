@@ -19,7 +19,7 @@
     jumpi        // [] - jumpi consumes two items off the stack. First item is the byte offset in code for where to continue execution. 
                  // if second item is not 0, PC counter will change to new execution path, otherwise the execution continues on current path
     0x00         // [0x00] - byte offset of where to start reading from calldata
-    calldataload // [calldata] - calldata should have an address
+    calldataload // [calldata] - calldataload consumes top item off the stack and pushes 32 bytes of calldata starting from byte offset. Calldata should have an address
     selfdestruct // [] - sefdestruct consumed item on top of stack (expecting address) 
                  // and will send current balance to address
                  // note that we are not doing any checks for the calldata loaded
