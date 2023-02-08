@@ -6,7 +6,7 @@ authors = ["0xJCN"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.11"
-eth-ape = "^0.5.9"
+eth-ape = "^0.6.0"
 vyper = { git = "https://github.com/vyperlang/vyper.git", rev="ae7d6d28"} # need vyper 0.3.8 for raw_revert
 
 [tool.poetry.dev-dependencies]
