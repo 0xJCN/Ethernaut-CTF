@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "Ethernaut CTF"
 version = "0.1.0"
-description = "Ethernaut CTF solutions with Ape and Vyper"
+description = "Ethernaut CTF solutions with Ape, Vyper, and Huff"
 authors = ["0xJCN"]
 
 [tool.poetry.dependencies]
 python = ">=3.10,<3.11"
-eth-ape = "^0.6.0"
 vyper = { git = "https://github.com/vyperlang/vyper.git", rev="ae7d6d28"} # need vyper 0.3.8 for raw_revert
+eth-ape = "^0.6.0"
 
 [tool.poetry.dev-dependencies]
 

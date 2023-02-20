@@ -1,0 +1,213 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+#define constant FORTA_SLOT = FREE_STORAGE_POINTER()
+#define constant VAULT_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [instance] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    dup1            // [instance] - duplicate instance for STATICCALL
+    [INSTANCE_SLOT] // [0x01, instance, instance] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [instance] - sstore consumes top two items off stack. sstore(key, value)
+
+    // MEMORY:
+    // [OFFSET 0] 00000000000000000000000093101833033a93EEc45f4aB25085C7F4a3F60f72 -> constructor arg (instance address)
+
+    // Copy `forta()` & `cryptoVault()` func sigs into memory to use as calldata for STATICCALL
+    0xd444d8a0d8670e1f     // [func_sigs, instance] 
+    0x00           // [0x00, func_sig, instance] - byte offset 
+    mstore         // [instance] - copied func sigs to memory starting at byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000d444d8a0d8670e1f -> `forta()` & `cryptoVault()` func sigs
+
+    // STATICCALL into instance
+    0x20           // [0x20, instance] - size of return data
+    0x20           // [0x20, 0x20, instance] - byte offset in memory where return data is copied
+    0x04           // [0x04, 0x20, 0x20, instance] - size of calldata
+    0x1c           // [0x1c, 0x04, 0x20, 0x20, instance] - byte offset in memory where calldata starts
+    dup5           // [instance, 0x1c, 0x04, 0x20, 0x20, instance] - calling instance
+    gas            // [gas, instance, 0x1c, 0x04, 0x20, 0x20, instance] - gas to send with call (gasleft())
+    staticcall     // [success, instance] - consumes top 6 items and pushes 1 if call was successful, 0 otherwise
+    store_forta    // [store_forta, success, instance] - store_forta label
+    jumpi          // [instance] - jump to store_forta instructions if call was successful
+    0x00           // [0x00, instance] - size of data to return with revert
+    0x00           // [0x00, 0x00, instance] - byte offset in memory to return as data for revert
+    revert         // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000d444d8a0d8670e1f -> `forta()` & `cryptoVault()` func sigs
+    // [OFFSET 32] 00000000000000000000000000697ce03f012ea39fa8ebbb2c23d62aa6dce53b2c -> return data (forta address)
+
+    store_forta:     // label for loading forta into storage
+        0x20         // [0x00, instance] - byte offset
+        mload        // [forta, instance] - copied return data onto stack
+        [FORTA_SLOT] // [0x02, forta, instance] - storage slot 0x02
+        sstore       // [instance] - copied forta address into storage slot 0x02
+
+    // STATICCALL into instance
+    0x20           // [0x20, instance] - size of return data
+    0x20           // [0x20, 0x20, instance] - byte offset in memory where return data is copied
+    0x04           // [0x04, 0x20, 0x20, instance] - size of calldata
+    0x18           // [0x1c, 0x04, 0x20, 0x20, instance] - byte offset in memory where calldata starts
+    dup5           // [instance, 0x1c, 0x04, 0x20, 0x20, instance] - calling instance
+    gas            // [gas, instance, 0x1c, 0x04, 0x20, 0x20, instance] - gas to send with call (gasleft())
+    staticcall     // [success, instance] - consumes top 6 items and pushes 1 if call was successful, 0 otherwise
+    store_vault    // [store_vault, success, instance] - store_vault label
+    jumpi          // [instance] - jump to store_vault instructions if call was successful
+    0x00           // [0x00, instance] - size of data to return with revert
+    0x00           // [0x00, 0x00, instance] - byte offset in memory to return as data for revert
+    revert         // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000d444d8a0d8670e1f -> `forta()` & `cryptoVault()` func sigs
+    // [OFFSET 32] 00000000000000000000000000cae37fcebc894825311dc73ded77b8a5bb94110c -> return data (vault address)
+
+    store_vault:     // label for loading vault into storage
+        0x20         // [0x20, instance] - byte offset
+        mload        // [vault, instance] - copied return data onto stack
+        [VAULT_SLOT] // [0x03, vault, instance] - storage slot 0x03
+        sstore       // [instance] - copied vault address into storage slot 0x03
+        pop          // []
+}
+
+// Modifier
+#define macro ONLY_FORTA() = takes (0) returns (1) {
+    [FORTA_SLOT]    // [0x02] - storage slot where forta is stored
+    sload           // [forta] - loaded forta address onto stack from storage slot 0x02
+    dup1            // [forta, forta] - duplicate forta to use in our HANDLE_TRANSACTION
+    caller          // [caller, forta, forta] - msg.sender
+    eq              // [0/1, forta] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_forta        // [is_forta, 0/1, forta] - byte offset in code for execution path
+    jumpi           // [forta] - consumes top two items and execution path jumps to is_forta if 2nd item is not 0
+
+    0x00            // [0x00, forta] - size
+    0x00            // [0x00, 0x00, forta] - byte offset
+    revert          // [forta] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_forta:       // is_forta label. execution continues here is the caller is the forta
+}
+
+// View function
+#define macro FORTA() = takes (0) returns (0) {
+    // Return forta address at slot 0x02
+    [FORTA_SLOT]    // [0x02] - storage slot where forta address is
+    sload           // [forta] - copied forta onto stack
+    0x00            // [0x00, forta] - byte offset
+    mstore          // [] - copied forta into memory starting at offset 0x00
+    0x20            // [0x20] - size of data to return
+    0x00            // [0x00, 0x20] - byte offset in memory where return data starts
+    return          // [] 
+}
+
+// Attack function
+#define macro HANDLE_TRANSACTION() = takes(1) returns (0) {
+    // takes: [forta]
+
+    // The msgData is the calldata from the delegate transfer, therefore the layout of msgData will be the following:
+    // method_id: 0x9cd1a121 - `delegatetransfer(address,uint256,address)` func sig
+    // [0]:  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c => first param: to (swepttokensrecipient)
+    // [1]:  0000000000000000000000000000000000000000000000056bc75e2d63100000 => second param: value (token balance of vault)
+    // [2]:  000000000000000000000000cae37fcebc894825311dc73ded77b8a5bb94110c => third param: origsender (vault)
+
+    // The calldata above is all passed into an argument to our function, which is of type bytes.
+    // This is the calldata for our function:
+    // method_id: 0x220ab6aa - `handleTransaction(address,bytes)` func sig
+    // [0][OFFSET 0x04]:  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c => first param: user (us)
+    // [1][OFFSET 0x24]:  0000000000000000000000000000000000000000000000000000000000000040 => offset for second param 
+    // [3][OFFSET 0x44]:  0000000000000000000000000000000000000000000000000000000000000064 => length of second param (100 bytes) see calldata above
+    // [4][OFFSET 0x64]:  9cd1a1210000000000000000000000001e59ce931b4cfea3fe4b875411e280e1 => start of second param (bytes) | func sig + to
+    // [5][OFFSET 0x84]:  73cb7a9c0000000000000000000000000000000000000000000000056bc75e2d => rest of to + value
+    // [6][OFFSET 0xa4]:  63100000000000000000000000000000cae37fcebc894825311dc73ded77b8a5 => rest of value + origSender
+    // [7][OFFSET 0xc4]:  bb94110c00000000000000000000000000000000000000000000000000000000 => rest of origSender + padding
+
+    // Extract origSender from calldata. origSender is located in offset 168
+    0xa8            // [0xa8, forta] - byte offset in calldata where origSender address starts
+    calldataload    // [sender, forta] - copied origSender from calldata onto the stack
+    [VAULT_SLOT]    // [0x03, sender, forta] - storage slot where vault is
+    sload           // [vault, sender, forta] - copied vault address onto stack
+    eq              // [0/1, forta]  - compares two top items. pushes 1 if equal, 0 otherwise
+    vault_is_caller // [vault_is_caller, 0/1, forta] - vault_is_caller label
+    jumpi           // [forta] - jump to vault_is_caller instructions if origSender == vault
+    0x00            // [0x00, forta] - return data size
+    0x00            // [0x00, 0x00, forta] - byte offset in memory where return data starts
+    return          // [forta]
+
+    vault_is_caller:
+        // Copy `raiseAlert(address)` and user param from calldata into memory to use as calldata for CALL
+        0x087a43c1    // [0x087a43c1, forta] - func sig
+        0x00          // [0x00, 0x087a43c1, forta] - byte offset 
+        mstore        // [forta] - copied func sig into memory starting at offset 0x00
+        0x04          // [0x04, forta] - byte offset in calldata
+        calldataload  // [user, forta] - copied user from calldata onto stack
+        0x20          // [0x20, user, forta] - byte offset in memory
+        mstore        // [forta] - copied user into memory starting at offset 0x20
+
+        // MEMORY:
+        // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000087a43c1 -> `raiseAlert(address)` func sig
+        // [OFFSET 32] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> user (address)
+
+        // CALL into forta
+        0x00          // [0x00, forta] - size of return data (none)
+        0x00          // [0x00, 0x00, forta] - byte offset in memory where return data is copied
+        0x24          // [0x24, 0x00, 0x00, forta] - size of calldata
+        0x1c          // [0x1xc, 0x24, 0x00, 0x00, forta] - byte offset in memory where calldata starts
+        0x00          // [0x00, 0x1c, 0x24, 0x00, 0x00, forta] - msg.value to send with call (none)
+        dup6          // [forta, 0x00, 0x1c, 0x24, 0x00, 0x00, forta] - calling forta
+        gas           // [gas, forta, 0x00, 0x1c, 0x24, 0x00, 0x00, forta] - gas to send with call (gasleft())
+        call          // [success, forta] - consumes top 6 items and pushes 1 if call did not revert, 0 otherwise
+        iszero        // [0/1, forta]
+        throw_error   // [throw_error, 0/1, forta]
+        jumpi         // [forta]
+}
+
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig]
+    0xd8670e1f   // [0xd8670e1f, func_sig, func_sig] - pushing func sig of 'forta' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    forta        // [forta, 0/1, func_sig] - forta is a label (byte offset) for the forta instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    dup1         // [func_sig, func_sig]
+    0x220ab6aa   // [0x220ab6aa, func_sig, func_sig] - pushing func sig of 'handleTransaction(address,bytes)' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    handle_tx    // [handle_tx, 0/1, func_sig] - handle_tx is a label (byte offset) for the handle tx instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+        
+    forta:       // label for forta instructions
+        FORTA() 
+
+    handle_tx:   // label for handle tx instructions
+        ONLY_FORTA()
+        HANDLE_TRANSACTION()
+}

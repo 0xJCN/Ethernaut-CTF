@@ -1,4 +1,5 @@
 from ape import networks, project
+from eth_abi import encode
 import subprocess
 
 MAX_UINT256 = 2**256 - 1
@@ -30,8 +31,34 @@ def level_completed(ethernaut, receipt, user, instance, level):
     ), "\n--- !something went wrong! ---\n"
 
 
-def deploy_huff_contract(huff_contract, user):
+def get_sig(func):
+    return subprocess.getoutput(f"cast sig '{func}'")
+
+
+def deploy_huff_helper(huff_contract, user, gas=2000000):
     bytecode = subprocess.getoutput(f"huffc -b ./contracts/utils/{huff_contract}")
-    txn = networks.ecosystems["arbitrum"].create_transaction(data=bytecode, gas=2000000)
+    txn = networks.ecosystems["ethereum"].create_transaction(data=bytecode, gas=gas)
     receipt = user.call(txn)
     return receipt.contract_address
+
+
+def deploy_huff_contract(huff_contract, instance, user, value=0, gas=2000000):
+    bytecode = subprocess.getoutput(f"huffc -b ./contracts/huff/{huff_contract}")
+    deployment_code = bytecode + encode(["address"], [instance]).hex()
+    txn = networks.ecosystems["ethereum"].create_transaction(
+        data=deployment_code,
+        gas=gas,
+        value=value,
+    )
+    receipt = user.call(txn)
+    return receipt.contract_address
+
+
+def send_tx(sender, receiver, calldata, gas=2000000):
+    txn = networks.ecosystems["ethereum"].create_transaction(
+        to=receiver,
+        data=calldata,
+        gas=gas,
+    )
+    receipt = sender.call(txn)
+    return receipt

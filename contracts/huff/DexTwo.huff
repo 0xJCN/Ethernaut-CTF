@@ -1,0 +1,129 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_INSTANCE() = takes (0) returns (0) {
+    caller          // [caller]
+    [INSTANCE_SLOT] // [0x01, caller] - storage slot where instance is stored
+    sload           // [instance, caller] - loaded instance address onto stack from storage slot 0x01
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_instance        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_instance if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_instance:    // is_instance label. execution continues here is the caller is the instance
+}
+
+// balanceOf function
+#define macro BALANCE_OF() = takes (1) returns (0) {
+    // takes: [param]
+
+    // If param == caller then return 100, else return 200
+    caller          // [msg.sender, param]
+    eq              // [0/1] - compares msg.sender & param (param is an address)
+    return_100      // [return_100, 0/1] - label for instructions to return 100
+    jumpi           // [] - jump to instructions if caller is equal to param
+
+    // Return 200
+    0xc8            // [0xc8] - 200
+    0x00            // [0x00, 0xc8] - byte offset
+    mstore          // [] - copied big number into memory starting at byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0] 00000000000000000000000000000000000000000000000000000000000000c8 -> 200
+
+    msize           // [0x20] - returns active bytes in memory and pushes value onto stack. Size of data to return
+    0x00            // [0x00, 0x20] - byte offset of return data in memory
+    return          // [] - returned big number
+
+
+    return_100:
+        // Return 100
+        0x64            // [0x64] - 100
+        0x00            // [0x00, 0x64] - byte offset
+        mstore          // [] - copied big number into memory starting at byte offset 0x00
+
+        // MEMORY:
+        // [OFFSET 0] 0000000000000000000000000000000000000000000000000000000000000064 -> 100
+
+        msize           // [0x20] - returns active bytes in memory and pushes value onto stack. Size of data to return
+        0x00            // [0x00, 0x20] - byte offset of return data in memory
+        return          // [] - returned big number
+}
+
+// transferFrom function
+#define macro TRANSFER_FROM() = takes (0) returns (0) {
+    // Return True
+    0x01            // [0x01] - True
+    0x00            // [0x00, 0x01] - byte offset
+    mstore          // [] - copied 0x01 into memory starting at byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0] 0000000000000000000000000000000000000000000000000000000000000001 -> True
+
+    msize           // [0x20] - returns active bytes in memory and pushes value onto stack. Size of data to return
+    0x00            // [0x00, 0x20] - byte offset of return data in memory
+    return          // [] - returned True
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00          // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload  // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0          // [0xe0, calldata] - 0xe0 is 224 bits
+    shr           // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                  // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1          // [func_sig, func_sig]
+    0x70a08231    // [0x70a08231, func_sig, func_sig] - pushing func sig of 'balanceOf(address)' onto the stack
+    eq            // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    balance_of    // [balance_of, 0/1, func_sig] - balance_of is a label (byte offset) for the balanceOf instructions
+    jumpi         // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    dup1          // [func_sig, func_sig]
+    0x23b872dd    // [0x23b872dd, func_sig, func_sig] - pushing func sig of 'transferFrom(address,address,uint256)' onto the stack
+    eq            // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    transfer_from // [transfer_from, 0/1, func_sig] - transfer_from is a label (byte offset) for the transferFrom instructions
+    jumpi         // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    throw_error:  // label for revert path
+        0x00 0x00 revert
+
+    balance_of:   // label for balanceOf instructions
+        0x04
+        calldataload   // [param]
+        ONLY_INSTANCE()
+        BALANCE_OF()
+
+    transfer_from: // label for transferFrom instructions
+        ONLY_INSTANCE()
+        TRANSFER_FROM()
+}

